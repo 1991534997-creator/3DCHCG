@@ -1,0 +1,943 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>宗地三维模型 - 手机适配版</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+        body {
+            font-family: system-ui, -apple-system, 'Segoe UI', 'Roboto', 'Helvetica Neue', sans-serif;
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+            background-color: #f5f5f5;
+            position: fixed;
+            touch-action: pan-x pan-y; /* 允许触摸滚动，但由canvas接管 */
+        }
+        #app {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+        }
+        /* 顶部标题栏 - 手机优化，更紧凑 */
+        .app-header {
+            height: 48px;
+            background: #0b2b44;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            font-weight: 500;
+            letter-spacing: 1px;
+            flex-shrink: 0;
+            z-index: 10;
+        }
+        /* 主内容区 - 移动端flex列布局，右侧面板改为底部抽屉或滑动 */
+        .main-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            overflow: hidden;
+        }
+        /* 3D视图容器 - 占据主要面积 */
+        .three-viewport {
+            flex: 1;
+            background: #e9eef3;
+            position: relative;
+            min-height: 0;
+            touch-action: none; /* 让canvas完全控制触摸 */
+        }
+        /* 信息面板 - 移动端改为底部可折叠/滑动卡片，初始显示部分内容 */
+        .info-drawer {
+            background: rgba(255,255,255,0.96);
+            backdrop-filter: blur(10px);
+            border-top-left-radius: 20px;
+            border-top-right-radius: 20px;
+            max-height: 45vh;
+            overflow-y: auto;
+            transition: transform 0.3s ease;
+            z-index: 20;
+            flex-shrink: 0;
+            touch-action: pan-y;
+        }
+        .drawer-handle {
+            width: 40px;
+            height: 5px;
+            background: #ccc;
+            border-radius: 3px;
+            margin: 10px auto 8px;
+            cursor: pointer;
+        }
+        .info-content {
+            padding: 0 16px 20px 16px;
+        }
+        .section-card {
+            background: white;
+            border-radius: 16px;
+            padding: 12px;
+            margin-bottom: 16px;
+            border: 1px solid #eee;
+        }
+        .section-title {
+            margin: 0 0 12px 0;
+            border-left: 4px solid #2c7cb0;
+            padding-left: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            color: #1e293b;
+        }
+        .section-title.orange {
+            border-left-color: #e67e22;
+        }
+        /* 表格移动端优化 - 横向滚动 */
+        .table-wrapper {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            margin: 0 -4px;
+            padding: 0 4px;
+        }
+        .info-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+            min-width: 260px;
+        }
+        .info-table td, .info-table th {
+            border: 1px solid #e2e8f0;
+            padding: 8px 6px;
+            vertical-align: top;
+        }
+        .info-table td:first-child {
+            background-color: #f8fafc;
+            font-weight: 500;
+            width: 35%;
+        }
+        .point-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 11px;
+            min-width: 300px;
+        }
+        .point-table th, .point-table td {
+            border: 1px solid #ddd;
+            padding: 6px 4px;
+            text-align: center;
+        }
+        .point-table th {
+            background: #eef2f6;
+            font-weight: 600;
+        }
+        /* 控制按钮 - 悬浮于左上角（3D视图容器内） */
+        .mode-controls {
+            position: absolute;
+            top: 12px;
+            left: 12px;
+            z-index: 30;
+            display: flex;
+            gap: 8px;
+            background: rgba(0,0,0,0.7);
+            backdrop-filter: blur(16px);
+            padding: 8px 12px;
+            border-radius: 48px;
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+        .mode-btn {
+            background: rgba(30,30,40,0.9);
+            border: none;
+            color: #ecf0f1;
+            padding: 6px 12px;
+            border-radius: 40px;
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            touch-action: manipulation;
+            letter-spacing: 0.5px;
+            white-space: nowrap;
+        }
+        .mode-btn.active {
+            background: #3498db;
+            color: white;
+        }
+        .mode-btn:active {
+            transform: scale(0.96);
+        }
+        /* 图例 - 右下角简洁显示（3D视图容器内） */
+        .legend-mobile {
+            position: absolute;
+            bottom: 12px;
+            right: 12px;
+            background: rgba(0,0,0,0.65);
+            backdrop-filter: blur(12px);
+            border-radius: 12px;
+            padding: 8px 12px;
+            color: #eee;
+            font-size: 10px;
+            z-index: 30;
+            pointer-events: none;
+            font-family: monospace;
+            border-right: 3px solid #3b82f6;
+            max-width: 130px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 4px;
+        }
+        .legend-color {
+            width: 18px;
+            height: 10px;
+            border-radius: 2px;
+        }
+        /* 提示小贴士 */
+        .tip-toast {
+            position: absolute;
+            top: 60px;
+            right: 12px;
+            background: rgba(0,0,0,0.6);
+            color: white;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 10px;
+            z-index: 30;
+            pointer-events: none;
+            backdrop-filter: blur(4px);
+        }
+        @media (max-width: 600px) {
+            .mode-btn { padding: 6px 14px; font-size: 12px; }
+            .section-title { font-size: 15px; }
+        }
+    </style>
+</head>
+<body>
+<div id="app"></div>
+
+<script type="importmap">
+    {
+        "imports": {
+            "vue": "https://unpkg.com/vue@3.5.12/dist/vue.esm-browser.js",
+            "three": "https://unpkg.com/three@0.170.0/build/three.module.js"
+        }
+    }
+</script>
+
+<script type="module">
+    import { createApp, ref, onMounted, onUnmounted } from 'vue';
+    import * as THREE from 'three';
+    import { OrbitControls } from 'https://unpkg.com/three@0.170.0/examples/jsm/controls/OrbitControls.js';
+
+    // ---------- 辅助函数 ----------
+    const toRadians = (deg) => deg * Math.PI / 180;
+    const WGS84_a = 6378137;
+    const WGS84_b = 6356752.314245;
+    function blhToXyz(lng, lat, height) {
+        const radLat = toRadians(lat);
+        const radLng = toRadians(lng);
+        const sinLat = Math.sin(radLat);
+        const cosLat = Math.cos(radLat);
+        const N = WGS84_a / Math.sqrt(1 - (1 - (WGS84_b*WGS84_b)/(WGS84_a*WGS84_a)) * sinLat * sinLat);
+        const x = (N + height) * cosLat * Math.cos(radLng);
+        const y = (N + height) * cosLat * Math.sin(radLng);
+        const z = (N * (WGS84_b*WGS84_b)/(WGS84_a*WGS84_a) + height) * sinLat;
+        return [x, y, z];
+    }
+
+    function computeCenter(points) {
+        let sumX = 0, sumY = 0, sumZ = 0;
+        points.forEach(p => { sumX += p[0]; sumY += p[1]; sumZ += p[2]; });
+        const cnt = points.length;
+        return [sumX / cnt, sumY / cnt, sumZ / cnt];
+    }
+
+    function triangulatePolygon(indices) {
+        const tris = [];
+        for (let i = 1; i < indices.length - 1; i++) {
+            tris.push([indices[0], indices[i], indices[i+1]]);
+        }
+        return tris;
+    }
+
+    // 创建纯文本标签 (手机端字体适当调大)
+    function createPlainTextSprite(message, color = '#ff9966') {
+        const canvas = document.createElement('canvas');
+        const fontSize = 20;
+        const ctx = canvas.getContext('2d');
+        ctx.font = `Bold ${fontSize}px system-ui, "Segoe UI", "PingFang SC"`;
+        const textWidth = ctx.measureText(message).width;
+        canvas.width = textWidth + 24;
+        canvas.height = fontSize + 16;
+        const ctx2 = canvas.getContext('2d');
+        ctx2.clearRect(0, 0, canvas.width, canvas.height);
+        ctx2.font = `Bold ${fontSize}px system-ui, "Segoe UI", "PingFang SC"`;
+        ctx2.fillStyle = color;
+        ctx2.textAlign = 'center';
+        ctx2.textBaseline = 'middle';
+        ctx2.fillText(message, canvas.width / 2, canvas.height / 2);
+        const texture = new THREE.CanvasTexture(canvas);
+        const material = new THREE.SpriteMaterial({ map: texture, depthTest: true, depthWrite: true, transparent: true });
+        const sprite = new THREE.Sprite(material);
+        const scaleX = canvas.width / 28;
+        const scaleY = canvas.height / 28;
+        sprite.scale.set(scaleX * 1.8, scaleY * 1.8, 1);
+        return sprite;
+    }
+
+    // ---------- Three.js 管理器（手机性能优化）----------
+    class ThreeMapManager {
+        constructor(container) {
+            this.container = container;
+            this.scene = null;
+            this.camera = null;
+            this.renderer = null;
+            this.group = null;
+            this.modelsGroup = null;
+            this.controls = null;
+            this.currentMode = 'all';
+            this.boundingBox = { min: { x: Infinity, y: Infinity, z: Infinity }, max: { x: -Infinity, y: -Infinity, z: -Infinity } };
+            this.pointLabels = [];
+            this.animationId = null;
+        }
+
+        init() {
+            this.scene = new THREE.Scene();
+            this.scene.background = new THREE.Color(0xf0f4fa);
+            this.group = new THREE.Group();
+            this.modelsGroup = new THREE.Group();
+            this.group.add(this.modelsGroup);
+            this.scene.add(this.group);
+            
+            const width = this.container.clientWidth;
+            const height = this.container.clientHeight;
+            this.camera = new THREE.PerspectiveCamera(40, width / height, 0.5, 30000);
+            this.camera.position.set(70, 55, 120);
+            
+            this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+            this.renderer.setSize(width, height);
+            this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // 限制像素比，省电
+            this.renderer.shadowMap.enabled = false; // 手机端关闭阴影提升性能
+            this.container.appendChild(this.renderer.domElement);
+            
+            // 光照优化
+            const ambientLight = new THREE.AmbientLight(0x6c7a89, 0.7);
+            this.scene.add(ambientLight);
+            const mainLight = new THREE.DirectionalLight(0xfff5e6, 1.0);
+            mainLight.position.set(80, 120, 60);
+            this.scene.add(mainLight);
+            const fillLight = new THREE.PointLight(0x88aaff, 0.4);
+            fillLight.position.set(-30, 40, 70);
+            this.scene.add(fillLight);
+            const backLight = new THREE.DirectionalLight(0xccddff, 0.35);
+            backLight.position.set(-40, 30, -80);
+            this.scene.add(backLight);
+            
+            // 轨道控制适配触摸
+            this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+            this.controls.enableDamping = true;
+            this.controls.dampingFactor = 0.06;
+            this.controls.rotateSpeed = 0.8;
+            this.controls.zoomSpeed = 0.8;
+            this.controls.panSpeed = 0.7;
+            this.controls.enableZoom = true;
+            this.controls.enablePan = true;
+            this.controls.touchRotate = true;
+            this.controls.touchZoom = true;
+            
+            this.animate();
+        }
+        
+        animate() {
+            this.animationId = requestAnimationFrame(() => this.animate());
+            if (this.controls) this.controls.update();
+            if (this.renderer && this.scene && this.camera) {
+                this.renderer.render(this.scene, this.camera);
+            }
+        }
+        
+        addModels(modelsData) {
+            while(this.modelsGroup.children.length) {
+                this.modelsGroup.remove(this.modelsGroup.children[0]);
+            }
+            this.pointLabels = [];
+            this.boundingBox = { min: { x: Infinity, y: Infinity, z: Infinity }, max: { x: -Infinity, y: -Infinity, z: -Infinity } };
+            
+            let allPoints = [];
+            modelsData.forEach(item => {
+                item.model.points.forEach(p => allPoints.push([p[0], p[1], p[2]]));
+            });
+            const centerOffset = computeCenter(allPoints);
+            
+            modelsData.forEach((item, idx) => {
+                const { points, edges, faces, pointCodes = [] } = item.model;
+                const meshMatConfig = item.meshMaterial || { color: '#3399ff', opacity: 0.55, transparent: true, side: THREE.DoubleSide };
+                const lineMatConfig = item.lineMaterial || { color: '#ffaa33' };
+                
+                const translatedPoints = points.map(p => [-(p[0] - centerOffset[0]), p[1] - centerOffset[1], p[2] - centerOffset[2]]);
+                translatedPoints.forEach(p => {
+                    this.boundingBox.min.x = Math.min(this.boundingBox.min.x, p[0]);
+                    this.boundingBox.min.y = Math.min(this.boundingBox.min.y, p[1]);
+                    this.boundingBox.min.z = Math.min(this.boundingBox.min.z, p[2]);
+                    this.boundingBox.max.x = Math.max(this.boundingBox.max.x, p[0]);
+                    this.boundingBox.max.y = Math.max(this.boundingBox.max.y, p[1]);
+                    this.boundingBox.max.z = Math.max(this.boundingBox.max.z, p[2]);
+                });
+                
+                const vertices = [];
+                translatedPoints.forEach(p => vertices.push(p[0], p[1], p[2]));
+                const indexArray = [];
+                if (faces && faces.length) {
+                    faces.forEach(faceGroup => {
+                        faceGroup.forEach(polygon => {
+                            if (polygon.length >= 3) {
+                                const tris = triangulatePolygon(polygon);
+                                tris.forEach(tri => indexArray.push(tri[0], tri[1], tri[2]));
+                            }
+                        });
+                    });
+                }
+                
+                const geometry = new THREE.BufferGeometry();
+                geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(vertices), 3));
+                if (indexArray.length) geometry.setIndex(indexArray);
+                geometry.computeVertexNormals();
+                
+                const material = new THREE.MeshStandardMaterial({
+                    color: meshMatConfig.color,
+                    opacity: meshMatConfig.opacity,
+                    transparent: meshMatConfig.transparent !== false,
+                    side: meshMatConfig.side || THREE.DoubleSide,
+                    roughness: 0.5,
+                    metalness: 0.05,
+                    depthWrite: meshMatConfig.opacity < 0.9 ? false : true,
+                    polygonOffset: true,
+                    polygonOffsetFactor: 1,
+                    polygonOffsetUnits: 1
+                });
+                const mesh = new THREE.Mesh(geometry, material);
+                mesh.castShadow = false;
+                mesh.receiveShadow = false;
+                mesh.userData = { type: 'mesh', modelIdx: idx };
+                mesh.visible = (this.currentMode === 'faces' || this.currentMode === 'all');
+                this.modelsGroup.add(mesh);
+                
+                // 边线优化 - 指定特定边为虚线
+                const solidVertices = [];
+                const dashedVertices = [];
+                const dashLen = lineMatConfig.dashSize || 0.8;
+                const gapLen = lineMatConfig.gapSize || 0.4;
+                const unitLen = dashLen + gapLen;
+                
+                // 定义需要虚线的边（基于点索引）
+                const dashedEdgePairs = [
+                            [12,13], [13,14], [14,15], [15,12],
+                            [15,16], [14,17], [13,18], [12,19],
+                ];
+                
+                edges.forEach((edge) => {
+                    const p1 = translatedPoints[edge[0]];
+                    const p2 = translatedPoints[edge[1]];
+                    if (p1 && p2) {
+                        // 检查是否是需要虚线的边
+                        const isDashedEdge = dashedEdgePairs.some(dashedEdge => {
+                            return (dashedEdge[0] === edge[0] && dashedEdge[1] === edge[1]) ||
+                                   (dashedEdge[0] === edge[1] && dashedEdge[1] === edge[0]);
+                        });
+                        
+                        if (isDashedEdge) {
+                            // 虚线 - 分割成短实线段
+                            const dx = p2[0] - p1[0];
+                            const dy = p2[1] - p1[1];
+                            const dz = p2[2] - p1[2];
+                            const totalLen = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                            const segments = Math.max(1, Math.floor(totalLen / unitLen));
+                            
+                            for (let s = 0; s <= segments; s++) {
+                                const t1 = s * unitLen / totalLen;
+                                const t2 = Math.min((s * unitLen + dashLen) / totalLen, 1);
+                                if (t2 > t1) {
+                                    dashedVertices.push(
+                                        p1[0] + dx * t1, p1[1] + dy * t1, p1[2] + dz * t1,
+                                        p1[0] + dx * t2, p1[1] + dy * t2, p1[2] + dz * t2
+                                    );
+                                }
+                            }
+                        } else {
+                            // 实线
+                            solidVertices.push(
+                                p1[0], p1[1], p1[2],
+                                p2[0], p2[1], p2[2]
+                            );
+                        }
+                    }
+                });
+                
+                // 创建实线和虚线对象
+                if (lineMatConfig.isDashed) {
+                    // 创建实线对象
+                    if (solidVertices.length > 0) {
+                        const solidGeo = new THREE.BufferGeometry();
+                        solidGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(solidVertices), 3));
+                        const solidMat = new THREE.LineBasicMaterial({ 
+                            color: lineMatConfig.color,
+                            transparent: true,
+                            opacity: 1.0
+                        });
+                        const solidLines = new THREE.LineSegments(solidGeo, solidMat);
+                        solidLines.userData = { type: 'line', modelIdx: idx };
+                        solidLines.visible = (this.currentMode === 'edges' || this.currentMode === 'all');
+                        this.modelsGroup.add(solidLines);
+                    }
+                    
+                    // 创建虚线对象
+                    if (dashedVertices.length > 0) {
+                        const dashedGeo = new THREE.BufferGeometry();
+                        dashedGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(dashedVertices), 3));
+                        const dashedMat = new THREE.LineBasicMaterial({ 
+                            color: lineMatConfig.color,
+                            transparent: true,
+                            opacity: lineMatConfig.opacity || 0.5
+                        });
+                        const dashedLines = new THREE.LineSegments(dashedGeo, dashedMat);
+                        dashedLines.userData = { type: 'line', modelIdx: idx, isDashed: true };
+                        dashedLines.visible = (this.currentMode === 'edges' || this.currentMode === 'all');
+                        this.modelsGroup.add(dashedLines);
+                    }
+                } else {
+                    // 非虚线模式 - 所有线都是实线
+                    const lineVertices = [];
+                    edges.forEach(edge => {
+                        const p1 = translatedPoints[edge[0]];
+                        const p2 = translatedPoints[edge[1]];
+                        if (p1 && p2) {
+                            lineVertices.push(
+                                p1[0], p1[1], p1[2],
+                                p2[0], p2[1], p2[2]
+                            );
+                        }
+                    });
+                    
+                    const lineGeo = new THREE.BufferGeometry();
+                    lineGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(lineVertices), 3));
+                    const lineMat = new THREE.LineBasicMaterial({ color: lineMatConfig.color });
+                    const wireframeObj = new THREE.LineSegments(lineGeo, lineMat);
+                    wireframeObj.userData = { type: 'line', modelIdx: idx };
+                    wireframeObj.visible = (this.currentMode === 'edges' || this.currentMode === 'all');
+                    this.modelsGroup.add(wireframeObj);
+                }
+                
+                // 只为宗地边界添加点号（第一个模型）
+                if (idx === 0 && translatedPoints.length) {
+                    const modelPoints = translatedPoints;
+                    let sumX = 0, sumY = 0, sumZ = 0;
+                    modelPoints.forEach(p => { sumX += p[0]; sumY += p[1]; sumZ += p[2]; });
+                    const centerX = sumX / modelPoints.length;
+                    const centerY = sumY / modelPoints.length;
+                    const centerZ = sumZ / modelPoints.length;
+                    
+                    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+                    modelPoints.forEach(p => { minX = Math.min(minX, p[0]); maxX = Math.max(maxX, p[0]); minY = Math.min(minY, p[1]); maxY = Math.max(maxY, p[1]); });
+                    const modelSize = Math.max(maxX - minX, maxY - minY, 8);
+                    const offsetDist = Math.max(modelSize * 0.01, 0.8);
+                    
+                    translatedPoints.forEach((pointPos, pid) => {
+                        let pointCode = (pointCodes && pointCodes[pid]) ? pointCodes[pid] : `P${pid+1}`;
+                        const labelColor = '#404040';
+                        const dx = pointPos[0] - centerX;
+                        const dy = pointPos[1] - centerY;
+                        const dz = pointPos[2] - centerZ;
+                        const len = Math.sqrt(dx*dx + dy*dy + dz*dz);
+                        const dirX = len > 0 ? dx / len : 0;
+                        const dirY = len > 0 ? dy / len : 0;
+                        const dirZ = len > 0 ? dz / len : 0;
+                        const labelSprite = createPlainTextSprite(pointCode, labelColor);
+                        labelSprite.position.set(
+                            pointPos[0] + dirX * offsetDist,
+                            pointPos[1] + dirY * offsetDist,
+                            pointPos[2] + dirZ * offsetDist
+                        );
+                        this.modelsGroup.add(labelSprite);
+                        this.pointLabels.push(labelSprite);
+                    });
+                }
+            });
+            
+            // 相机适配
+            if (this.boundingBox.min.x !== Infinity) {
+                const center = new THREE.Vector3(
+                    (this.boundingBox.min.x + this.boundingBox.max.x)/2,
+                    (this.boundingBox.min.y + this.boundingBox.max.y)/2,
+                    (this.boundingBox.min.z + this.boundingBox.max.z)/2
+                );
+                const maxDim = Math.max(
+                    this.boundingBox.max.x - this.boundingBox.min.x,
+                    this.boundingBox.max.y - this.boundingBox.min.y,
+                    this.boundingBox.max.z - this.boundingBox.min.z
+                );
+                const distance = maxDim * 1.6;
+                this.camera.position.set(center.x + distance * 0.7, center.y + distance * 0.7, center.z + distance);
+                this.controls.target.set(center.x, center.y + distance * 0.2, center.z);
+                this.controls.update();
+                // 旋转使Z轴向上 (GIS风格)
+                this.group.rotation.x = -Math.PI / 2;
+                //this.group.rotation.z = Math.PI / 2;
+            }
+        }
+        
+        setMode(mode) {
+            this.currentMode = mode;
+            this.modelsGroup.children.forEach(child => {
+                if (child.isMesh && child.userData.type === 'mesh') {
+                    child.visible = (mode === 'faces' || mode === 'all');
+                } else if (child.isLineSegments && child.userData.type === 'line') {
+                    child.visible = (mode === 'edges' || mode === 'all');
+                }
+            });
+        }
+        
+        resize(width, height) {
+            if (this.camera && this.renderer) {
+                this.camera.aspect = width / height;
+                this.camera.updateProjectionMatrix();
+                this.renderer.setSize(width, height);
+            }
+        }
+        
+        dispose() {
+            if (this.animationId) cancelAnimationFrame(this.animationId);
+            if (this.renderer) {
+                this.renderer.dispose();
+                if (this.renderer.domElement && this.renderer.domElement.parentNode) {
+                    this.renderer.domElement.parentNode.removeChild(this.renderer.domElement);
+                }
+            }
+        }
+    }
+    
+    // ---------- Vue 组件 (移动端优化UI) ----------
+    const App = {
+        setup() {
+            const threeManager = ref(null);
+            const activeMode = ref('all');
+            const drawerExpanded = ref(true); // 移动端默认展开信息面板部分
+            
+            // 模型数据同原定义
+            const modelsData = [
+                {
+                    name: "宗地边界",
+                    model: {
+
+                        points: [
+                            [2514670.49, 502145.96, 0],
+                            [2514615.75, 502143.08, 0],
+                            [2514616.31, 502098.72, 0],
+                            [2514617.45, 502007.92, 0],
+                            [2514625.44, 501998.59, 0],
+                            [2514667.74, 501991.47, 0],
+                            [2514726.17, 501981.70, 0],
+                            [2514732.85, 502062.48, 0],
+                            [2514737.82, 502122.69, 0],
+                            [2514739.16, 502138.97, 0],
+                            [2514703.04, 502147.67, 0],
+                            [2514674.31, 502157.87, 0],
+                        ],
+                        // 点号
+                        pointCodes: [
+                            "J943/06364", "J1044/06364", "J1045/06364", "J1046/06364", "J1047/06364", 
+                            "J1048/06364", "J1049/06364", "J1050/06364", "J1051/06364", "J004/06364",
+                            "J005/06364",
+                            "J037/06364",
+                        ],
+                        // 边线 - 连接点的索引对
+                        edges: [
+                            // 主体
+                            [0,1], [1,2], [2,3], [3,4], [4,5], [5,6],
+                            [6,7], [7,8], [8,9], [9,10], [10,11], [11,0],
+                        ],
+                        // 面 - 由点索引构成的多边形
+                        faces: [
+                            [[0, 1, 2, 3, 4, 5,6,7,8,9,10,11]],
+                        ]
+                    },
+                    meshMaterial: { color: "#ff8866", opacity: 0.1, transparent: true, side: THREE.DoubleSide },
+                    lineMaterial: { color: "#ff7777", isDashed: true, dashSize: 0.8, gapSize: 0.4, opacity: 0.5 }
+                },
+                {
+                    name: "地下室",
+                    model: {
+                        points: [
+                            [2514723.4733, 501986.4515, -10.6],//0
+                            [2514732.3116, 502124.4131, -10.6],//1
+                            [2514676.0557, 502136.5358, -10.6],//2
+                            [2514622.2043, 502132.7531, -10.6],//3
+                            [2514625.9005, 502009.5591, -10.6],//4
+                            [2514634.5929, 501999.7655, -10.6],//5
+                            [2514723.4733, 501986.4515, 0],//6
+                            [2514732.3116, 502124.4131, 0],//7
+                            [2514676.0557, 502136.5358, 0],//8
+                            [2514622.2043, 502132.7531, 0],//9
+                            [2514625.9005, 502009.5591, 0],//10
+                            [2514634.5929, 501999.7655, 0],//11
+                        ],
+                        edges: [
+                            [0,1], [1,2], [2,3], [3,4], [4,5], [5,0],
+                            [6,7], [7,8], [8,9], [9,10], [10,11], [11,6],
+                            [0,6], [1,7], [2,8], [3,9], [4,10], [5,11],
+                            ],
+                        faces: [[[0,1,2,3,4,5]], [[6,7,8,9,10,11]], [[6,7,1,0]], [[7,8,2,1]], [[8,9,3,2]], [[9,10,4,3]], [[10,11,5,4]], [[11,6,0,5]],]
+                    },
+                    meshMaterial: { color: "#D3D3D3", opacity: 0.4, transparent: true, side: THREE.DoubleSide },
+                    lineMaterial: { color: "#D3D3D3" }
+                },
+                {
+                    name: "大部分",
+                    model: {
+                        points: [
+                            [2514713.1719, 502016.9463, 0], [2514714.8182, 502110.4927, 0], 
+                            [2514663.0950, 502111.4030, 0], [2514661.4568, 502017.8490, 0], 
+                            [2514713.1719, 502016.9463, 8], [2514714.8182, 502110.4927, 8], 
+                            [2514663.0950, 502111.4030, 8], [2514661.4568, 502017.8490, 8],  
+                        ],
+                        edges: [[0,1],[1,2],[2,3],[3,0],
+                        [4,5],[5,6],[6,7],[7,4],
+                        [0,4],[1,5],[2,6],[3,7],],
+                        faces: [[[0,1,2,3]] ,[[4,5,6,7]],[[0,1,5,4]],[[1,2,6,5]],[[2,3,7,6]],[[3,0,4,7]]]
+                    },
+                    meshMaterial: { color: "#5aadff", opacity: 1, transparent: true, side: THREE.DoubleSide },
+                    lineMaterial: { color: "#5aadff" }
+
+                },
+                {
+                    name: "大部分",
+                    model: {
+                        points: [
+                            [2514713.1719, 502016.9463, 95], [2514714.8182, 502110.4927, 95], 
+                            [2514663.0950, 502111.4030, 95], [2514661.4568, 502017.8490, 95], 
+                            [2514713.1719, 502016.9463, 105], [2514714.8182, 502110.4927, 105], 
+                            [2514663.0950, 502111.4030, 105], [2514661.4568, 502017.8490, 105],  
+                        ],
+                        edges: [[0,1],[1,2],[2,3],[3,0],
+                        [4,5],[5,6],[6,7],[7,4],
+                        [0,4],[1,5],[2,6],[3,7],],
+                        faces: [[[0,1,2,3]] ,[[4,5,6,7]],[[0,1,5,4]],[[1,2,6,5]],[[2,3,7,6]],[[3,0,4,7]]]
+                    },
+                    meshMaterial: { color: "#5aadff", opacity: 1, transparent: true, side: THREE.DoubleSide },
+                    lineMaterial: { color: "#5aadff" }
+
+                },
+                {
+                    name: "1栋",
+                    model: {
+                        points: [
+                            [2514713.1719, 502016.9463, 8], [2514706.3027, 502048.4710, 8], 
+                            [2514662.0066, 502049.2467, 8], [2514661.4585, 502017.8489, 8], 
+                            [2514713.1719, 502016.9463, 95], [2514706.3027, 502048.4710, 95], 
+                            [2514662.0066, 502049.2467, 95], [2514661.4585, 502017.8489, 95], 
+                        ],
+                        edges: [[0,1],[1,2],[2,3],[3,0],
+                        [4,5],[5,6],[6,7],[7,4],
+                        [0,4],[1,5],[2,6],[3,7],],
+                        faces: [[[0,1,2,3]] ,[[4,5,6,7]],[[0,1,5,4]],[[1,2,6,5]],[[2,3,7,6]],[[3,0,4,7]]]
+                    },
+                    meshMaterial: { color: "#5aadff", opacity: 1, transparent: true, side: THREE.DoubleSide },
+                    lineMaterial: { color: "#5aadff" }
+
+                },
+                {
+                    name: "2栋",
+                    model: {
+                        points: [
+                            [2514714.2569, 502079.1368, 8], [2514714.8040, 502110.4930, 8], 
+                            [2514663.0950, 502111.4030, 8], [2514669.4824, 502079.9184, 8],
+                            [2514714.2569, 502079.1368, 95], [2514714.8040, 502110.4930, 95], 
+                            [2514663.0950, 502111.4030, 95], [2514669.4824, 502079.9184, 95],
+                        ],
+                        edges: [[0,1],[1,2],[2,3],[3,0],
+                        [4,5],[5,6],[6,7],[7,4],
+                        [0,4],[1,5],[2,6],[3,7],],
+                        faces: [[[0,1,2,3]] ,[[4,5,6,7]],[[0,1,5,4]],[[1,2,6,5]],[[2,3,7,6]],[[3,0,4,7]]]
+                    },
+                    meshMaterial: { color: "#5aadff", opacity: 1, transparent: true, side: THREE.DoubleSide },
+                    lineMaterial: { color: "#5aadff" }
+                }
+               
+            ];
+            
+            // 宗地属性数据
+            const infoRows = ref([
+                { col1: "宗地号", col2: "A922-0795", showFirstCol: true },
+                { col1: "宗地代码", col2: "440306402004GB00567", showFirstCol: true },
+                { col1: "项目名称", col2: "世锦园区", showFirstCol: true },
+                { col1: "权利人", col2: "深圳市茂丰源实业有限公司", showFirstCol: true },
+                { col1: "坐落", col2: "深圳市龙华区桔新路2号", showFirstCol: true },
+                { col1: "宗地四至", col2: "东：福前路", rowspan: 4, showFirstCol: true },
+                { col1: "", col2: "南：桔新路", showFirstCol: false },
+                { col1: "", col2: "西：空地", showFirstCol: false },
+                { col1: "", col2: "北：空地", showFirstCol: false },
+                { col1: "宗地面积", col2: "18113.58 m²", showFirstCol: true },
+                { col1: "建筑容积率", col2: "3.85", showFirstCol: true },
+                { col1: "总建筑面积", col2: "97885.51 m²", showFirstCol: true },
+                { col1: "栋号", col2: "1栋", showFirstCol: true },
+                { col1: "建筑面积", col2: "74428.88 m²", showFirstCol: true },
+                { col1: "总套数", col2: "2", showFirstCol: true },
+                { col1: "总层数：23", col2: "地上层数：21", rowspan: 2, showFirstCol: true },
+                { col1: "", col2: "地下层数：2", showFirstCol: false },]);
+            
+            
+            const boundaryPoints = ref([]);
+            const generatePointsTable = () => {
+                const mainModel = modelsData[0];
+                const points = mainModel.model.points;
+                const codes = mainModel.model.pointCodes || [];
+                const rows = [];
+                
+                // 创建点号到索引的映射
+                for (let i = 0; i < points.length; i++) {
+                    const pt = points[i];
+                    const code = codes[i] || `K${i+1}`;
+                    // 提取K号中的数字
+                    const kNumber = parseInt(code.replace('K', ''), 10);
+                    rows.push({
+                        originalIndex: i,
+                        kNumber: kNumber,
+                        code: code,
+                        x: pt[0].toFixed(2),
+                        y: pt[1].toFixed(2),
+                        z: pt[2].toFixed(2)
+                    });
+                }
+                
+                // 按照K号排序
+                rows.sort((a, b) => a.kNumber - b.kNumber);
+                
+                // 重新设置序号
+                rows.forEach((row, idx) => {
+                    row.idx = idx + 1;
+                });
+                
+                boundaryPoints.value = rows;
+            };
+            generatePointsTable();
+            
+            const switchMode = (mode) => {
+                activeMode.value = mode;
+                if (threeManager.value) {
+                    threeManager.value.setMode(mode);
+                }
+            };
+            
+            const toggleDrawer = () => {
+                drawerExpanded.value = !drawerExpanded.value;
+                const drawerEl = document.querySelector('.info-drawer');
+                if (drawerEl) {
+                    drawerEl.style.maxHeight = drawerExpanded.value ? '45vh' : '70px';
+                }
+            };
+            
+            onMounted(() => {
+                const container = document.getElementById('threeContainer');
+                if (container) {
+                    const manager = new ThreeMapManager(container);
+                    manager.init();
+                    manager.addModels(modelsData);
+                    manager.setMode(activeMode.value);
+                    threeManager.value = manager;
+                    
+                    const handleResize = () => {
+                        const w = container.clientWidth;
+                        const h = container.clientHeight;
+                        manager.resize(w, h);
+                    };
+                    window.addEventListener('resize', handleResize);
+                    // 确保画布适应变化
+                    setTimeout(handleResize, 100);
+                    
+                    // 清理
+                    onUnmounted(() => {
+                        window.removeEventListener('resize', handleResize);
+                        if (threeManager.value) threeManager.value.dispose();
+                    });
+                }
+            });
+            
+            return {
+                activeMode,
+                infoRows,
+                boundaryPoints,
+                switchMode,
+                drawerExpanded,
+                toggleDrawer
+            };
+        },
+        template: `
+            <div class="app-header">
+                📐 不动产三维模型-世锦园区（A922-0795）
+            </div>
+            <div class="main-container">
+                <div id="threeContainer" class="three-viewport">
+                    <div class="mode-controls">
+                        <button @click="switchMode('edges')" :class="['mode-btn', {active: activeMode === 'edges'}]">📐 线模式</button>
+                        <button @click="switchMode('faces')" :class="['mode-btn', {active: activeMode === 'faces'}]">🔲 面模式</button>
+                        <button @click="switchMode('all')" :class="['mode-btn', {active: activeMode === 'all'}]">🌐 线面全显</button>
+                    </div>
+                    <div class="legend-mobile">
+                        <div style="font-weight:bold; font-size:11px;">图例</div>
+                        <div class="legend-item"><div class="legend-color" style="background:#ff7777;"></div><span>宗地红线</span></div>
+                        <div class="legend-item"><div class="legend-color" style="background:#5aadff;"></div><span>地上部分</span></div>
+                        <div class="legend-item"><div class="legend-color" style="background:#D3D3D3;"></div><span>地下部分</span></div>
+                        
+                    </div>
+                    <div class="tip-toast">
+                        🖐️ 单指旋转 | ✌️ 双指缩放
+                    </div>
+                </div>
+                <div class="info-drawer" :style="{ maxHeight: drawerExpanded ? '45vh' : '70px', transition: 'max-height 0.25s ease' }">
+                    <div class="drawer-handle" @click="toggleDrawer"></div>
+                    <div class="info-content">
+                        <div class="section-card">
+                            <div class="section-title">📋 不动产信息表</div>
+                            <div class="table-wrapper">
+                                <table class="info-table">
+                                    <tbody>
+                                        <tr v-for="(row, idx) in infoRows" :key="idx">
+                                            <td v-if="row.showFirstCol" :rowspan="row.rowspan" style="background:#f8fafc; font-weight:500;">{{ row.col1 }}</td>
+                                            <td>{{ row.col2 }}</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <div class="section-card">
+                            <div class="section-title orange">📍 界址点坐标表</div>
+                            <div class="table-wrapper">
+                                <table class="point-table">
+                                    <thead>
+                                        <tr><th>序号</th><th>点号</th><th>X(m)</th><th>Y(m)</th><th>H(m)</th></tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr v-for="pt in boundaryPoints" :key="pt.idx">
+                                            <td>{{ pt.idx }}</td><td>{{ pt.code }}</td><td>{{ pt.x }}</td><td>{{ pt.y }}</td><td>{{ "/" }}</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `
+    };
+    
+    const app = createApp(App);
+    app.mount('#app');
+</script>
+</body>
+</html>
